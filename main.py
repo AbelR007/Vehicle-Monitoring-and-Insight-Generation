@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 import pickle
-from google.colab import files
 
 # Dimensions of each parking space rectangle
 rectW, rectH = 107, 48
@@ -11,7 +10,7 @@ cap = cv2.VideoCapture('carPark.mp4')
 
 
 # Load parking positions from a pickle file
-with open('CarParkPos', 'rb') as f:
+with open('CarParkPos.unknown', 'rb') as f:
     posList = pickle.load(f)
 
 # Initialize the frame counter
@@ -23,12 +22,12 @@ out = cv2.VideoWriter('output.avi', fourcc, 20.0, (int(cap.get(3)), int(cap.get(
 
 def check(imgPro):
 
-  # Check parking spaces and draw rectangles to indicate free or occupied spaces.
+    # Check parking spaces and draw rectangles to indicate free or occupied spaces.
     spaceCount = 0
     for pos in posList:
         x, y = pos
 
-         # Crop the processed image to the area of the parking space
+        # Crop the processed image to the area of the parking space
         crop = imgPro[y:y+rectH, x:x+rectW]
 
         # Count the number of non-zero (white) pixels in the cropped image
@@ -44,18 +43,19 @@ def check(imgPro):
             thick = 2
         # Draw the rectangle on the original image
         cv2.rectangle(img, pos, (x + rectW, y + rectH), color, thick)
+
     # Draw a filled rectangle to display the count of free spaces
     cv2.rectangle(img, (45, 30), (250, 75), (180, 0, 180), -1)
     # Display the count of free spaces on the image
     cv2.putText(img, f'Free: {spaceCount}/{len(posList)}', (50, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
 
 while True:
-  # Read a frame from the video
+    # Read a frame from the video
     ret, img = cap.read()
     if not ret:
         break
 
-  # Reset the frame counter if the end of the video is reached
+    # Reset the frame counter if the end of the video is reached
     if frame_counter == cap.get(cv2.CAP_PROP_FRAME_COUNT):
         frame_counter = 0
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -82,6 +82,3 @@ while True:
 cap.release()
 out.release()
 cv2.destroyAllWindows()
-
-# Download the output video file
-files.download('output.avi')
