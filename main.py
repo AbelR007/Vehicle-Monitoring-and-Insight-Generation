@@ -1,84 +1,109 @@
 import cv2
 import numpy as np
 import pickle
+import streamlit as st
+import time
+import matplotlib.pyplot as plt
 
-# Dimensions of each parking space rectangle
-rectW, rectH = 107, 48
+# Constants
+RECT_W, RECT_H = 107, 48
 
-# Open the video file
-cap = cv2.VideoCapture('carPark.mp4')
-
-
-# Load parking positions from a pickle file
-with open('CarParkPos.unknown', 'rb') as f:
-    posList = pickle.load(f)
-
-# Initialize the frame counter
-frame_counter = 0
-
-# Define the codec and create a VideoWriter object to save the output video
-fourcc = cv2.VideoWriter_fourcc(*'XVID')
-out = cv2.VideoWriter('output.avi', fourcc, 20.0, (int(cap.get(3)), int(cap.get(4))))
-
-def check(imgPro):
-
-    # Check parking spaces and draw rectangles to indicate free or occupied spaces.
-    spaceCount = 0
-    for pos in posList:
-        x, y = pos
-
-        # Crop the processed image to the area of the parking space
-        crop = imgPro[y:y+rectH, x:x+rectW]
-
-        # Count the number of non-zero (white) pixels in the cropped image
-        count = cv2.countNonZero(crop)
-        if count < 900:
-            # If less than 900 white pixels, the space is considered free
-            spaceCount += 1
-            color = (0, 255, 0) # Green color for free space
-            thick = 5
-        else:
-            # Otherwise, the space is considered occupied
-            color = (0, 0, 255) # Red rectangle for occupied space
-            thick = 2
-        # Draw the rectangle on the original image
-        cv2.rectangle(img, pos, (x + rectW, y + rectH), color, thick)
-
-    # Draw a filled rectangle to display the count of free spaces
-    cv2.rectangle(img, (45, 30), (250, 75), (180, 0, 180), -1)
-    # Display the count of free spaces on the image
-    cv2.putText(img, f'Free: {spaceCount}/{len(posList)}', (50, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-
-while True:
-    # Read a frame from the video
-    ret, img = cap.read()
-    if not ret:
-        break
-
-    # Reset the frame counter if the end of the video is reached
-    if frame_counter == cap.get(cv2.CAP_PROP_FRAME_COUNT):
-        frame_counter = 0
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-
-    # Convert the frame to grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # Apply Gaussian blur to the grayscale image
+def process_frame(frame):
+    # Image processing pipeline
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (3, 3), 1)
-    # Apply adaptive thresholding to the blurred image
-    Thre = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 16)
-    # Apply median blur to the thresholded image
-    blur = cv2.medianBlur(Thre, 5)
-    # Create a kernel for dilation
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 16)
+    median_blur = cv2.medianBlur(thresh, 5)
     kernel = np.ones((3, 3), np.uint8)
-    # Apply dilation to the blurred image
-    dilate = cv2.dilate(blur, kernel, iterations=1)
-    # Check the parking spaces in the processed image
-    check(dilate)
+    dilate = cv2.dilate(median_blur, kernel, iterations=1)
+    return dilate
 
-    out.write(img)  # Write the processed frame to the output video file
-    cv2.waitKey(10) # Introduce a small delay to allow the image to be displayed
+def check_parking_spaces(processed_frame, pos_list):
+    occupied_spaces = np.zeros(len(pos_list), dtype=bool)
+    for i, pos in enumerate(pos_list):
+        x, y = pos
+        crop = processed_frame[y:y+RECT_H, x:x+RECT_W]
+        occupied_spaces[i] = cv2.countNonZero(crop) >= 900
 
-# Release the video capture and writer objects
-cap.release()
-out.release()
-cv2.destroyAllWindows()
+    return occupied_spaces
+
+def display_frame(frame, occupied_spaces, pos_list):
+    free_spaces = len(pos_list) - np.count_nonzero(occupied_spaces)
+    cv2.putText(frame, f'Free: {free_spaces}/{len(pos_list)}', (50, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+    return frame
+
+def display_graph(occupancy_data):
+    x_values = list(occupancy_data.keys())
+    y_values = list(occupancy_data.values())
+    plt.plot(x_values, y_values)
+    plt.xlabel("Time (seconds)")
+    plt.ylabel("Occupied Parking Spaces")
+    plt.title("Parking Lot Occupancy")
+    st.pyplot(plt)
+
+def main():
+    st.title("Vehicle Montioring and Insight Generation")
+
+    uploaded_file = st.file_uploader("Choose a video file", type='mp4')
+
+    if uploaded_file is not None:
+        cap = cv2.VideoCapture(uploaded_file.name)
+
+        with open('car_park_pos', 'rb') as f:
+            pos_list = pickle.load(f)
+
+        prev_occupied_spaces = None
+        occupancy_data = {}
+        frame_count = 0
+
+        frames = []
+        show_frames = False
+        show_graph = False
+
+        st.header("Analysis Options")
+        st.text("Video Frames, with each update")
+        show_frames_button = st.button("Show Frames")
+        st.text("Visual Graph, based on video updates")
+        show_graph_button = st.button("Show Graph")
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            processed_frame = process_frame(frame)
+            occupied_spaces = check_parking_spaces(processed_frame, pos_list)
+
+            # Update Streamlit display if there's a change
+            if not np.array_equal(occupied_spaces, prev_occupied_spaces):
+                frame_with_rectangles = display_frame(frame.copy(), occupied_spaces, pos_list)
+                frames.append(frame_with_rectangles)
+                prev_occupied_spaces = occupied_spaces.copy()
+
+                # Update occupancy data
+                occupancy_data[frame_count] = np.count_nonzero(occupied_spaces)
+
+            frame_count += 1
+
+            if show_frames:
+                for frame in frames:
+                    st.image(frame, channels="BGR")
+
+            if show_graph:
+                display_graph(occupancy_data)
+
+            if show_frames_button:
+                show_frames = True
+            if show_graph_button:
+                show_graph = True
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
+    else:
+        st.write("Please upload a video file!")
+
+if __name__ == "__main__":
+    main()
